@@ -1,0 +1,22 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "AArch64 UEFI VM",
+  "vm": {
+    "architecture": "aarch64",
+    "machine": "virt",
+    "accelerator": "hvf",
+    "firmware": {
+      "mode": "uefi",
+      "uefiCode": "",
+      "uefiVars": "",
+      "pflashFormat": "raw",
+      "uefiCodeReadOnly": true,
+      "uefiVarsReadOnly": false,
+      "secureBoot": false,
+      "smm": false,
+      "bootOrder": "cdn"
+    }
+  },
+  "lle": {"enabled": false}
+}

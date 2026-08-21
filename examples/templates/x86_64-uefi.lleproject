@@ -1,0 +1,22 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "x86_64 UEFI VM",
+  "vm": {
+    "architecture": "x86_64",
+    "machine": "q35",
+    "accelerator": "hvf",
+    "firmware": {
+      "mode": "uefi",
+      "uefiCode": "",
+      "uefiVars": "",
+      "pflashFormat": "raw",
+      "uefiCodeReadOnly": true,
+      "uefiVarsReadOnly": false,
+      "secureBoot": false,
+      "smm": false,
+      "bootOrder": "cdn"
+    }
+  },
+  "lle": {"enabled": false}
+}

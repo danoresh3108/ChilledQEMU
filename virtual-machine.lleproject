@@ -1,0 +1,106 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "New virtual machine",
+  "vm": {
+    "qemuBinary": "",
+    "architecture": "x86_64",
+    "machine": "q35",
+    "accelerator": "hvf",
+    "cpu": {
+      "model": "host",
+      "cores": 2,
+      "sockets": 1,
+      "threads": 1
+    },
+    "memoryMiB": 4096,
+    "storage": {
+      "disks": [],
+      "iso": ""
+    },
+    "network": {
+      "mode": "user",
+      "model": "virtio-net-pci",
+      "mac": "",
+      "interface": "",
+      "bridge": "",
+      "hostForwards": []
+    },
+    "video": {
+      "model": "virtio",
+      "display": "cocoa"
+    },
+    "sound": {
+      "model": "none",
+      "backend": "coreaudio"
+    },
+    "usb": {
+      "enabled": true,
+      "controller": "qemu-xhci",
+      "devices": [
+        "usb-tablet"
+      ]
+    },
+    "firmware": {
+      "mode": "default",
+      "bios": "",
+      "uefiCode": "",
+      "uefiVars": "",
+      "pflashFormat": "raw",
+      "uefiCodeReadOnly": true,
+      "uefiVarsReadOnly": false,
+      "secureBoot": false,
+      "smm": false,
+      "bootOrder": "cdn"
+    },
+    "security": {
+      "enabled": false,
+      "profile": "balanced",
+      "noUserConfig": true,
+      "noDefaults": false,
+      "disableMonitor": true,
+      "disableSerial": false,
+      "networkIsolation": false,
+      "ephemeralDisks": false,
+      "sandbox": false,
+      "sandboxRequired": false,
+      "sandboxLockUntil": 0
+    },
+    "tracing": {
+      "enabled": false,
+      "preset": "translation",
+      "forceTcg": true,
+      "guestAssembly": true,
+      "hostAssembly": true,
+      "tcgOps": false,
+      "optimizedOps": true,
+      "executedBlocks": false,
+      "cpuState": false,
+      "interrupts": false,
+      "cpuReset": false,
+      "unimplemented": false,
+      "guestErrors": true,
+      "noChain": false,
+      "captureSerial": false,
+      "addressFilter": "",
+      "logFile": ""
+    },
+    "extraArgs": []
+  },
+  "lle": {
+    "enabled": false,
+    "firmware": {
+      "roms": []
+    },
+    "deviceModels": [],
+    "timingClockOptions": {
+      "rtc": "",
+      "icount": "",
+      "extraArgs": []
+    },
+    "requiredQemuDevices": [],
+    "requiredModules": [],
+    "notes": "",
+    "instructions": ""
+  }
+}

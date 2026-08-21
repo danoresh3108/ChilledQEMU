@@ -1,0 +1,120 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "Example x86_64 LLE-aware VM",
+  "vm": {
+    "qemuBinary": "",
+    "architecture": "x86_64",
+    "machine": "q35",
+    "accelerator": "hvf",
+    "cpu": {
+      "model": "host",
+      "cores": 2,
+      "sockets": 1,
+      "threads": 1
+    },
+    "memoryMiB": 4096,
+    "storage": {
+      "disks": [
+        {
+          "path": "images/system.qcow2",
+          "format": "qcow2",
+          "interface": "virtio",
+          "readOnly": false,
+          "snapshot": false,
+          "description": "System disk"
+        }
+      ],
+      "iso": "images/installer.iso"
+    },
+    "network": {
+      "mode": "user",
+      "model": "virtio-net-pci",
+      "mac": "52:54:00:12:34:56",
+      "interface": "",
+      "bridge": "",
+      "hostForwards": [
+        "tcp::2222-:22"
+      ]
+    },
+    "video": {
+      "model": "virtio",
+      "display": "cocoa"
+    },
+    "sound": {
+      "model": "ich9-intel-hda",
+      "backend": "coreaudio"
+    },
+    "usb": {
+      "enabled": true,
+      "controller": "qemu-xhci",
+      "devices": [
+        "usb-tablet"
+      ]
+    },
+    "firmware": {
+      "mode": "uefi",
+      "bios": "",
+      "uefiCode": "firmware/OVMF_CODE.fd",
+      "uefiVars": "firmware/OVMF_VARS.fd",
+      "bootOrder": "cdn"
+    },
+    "security": {
+      "enabled": true,
+      "profile": "balanced",
+      "noUserConfig": true,
+      "noDefaults": false,
+      "disableMonitor": true,
+      "disableSerial": false,
+      "networkIsolation": false,
+      "ephemeralDisks": false,
+      "sandbox": false,
+      "sandboxRequired": false,
+      "sandboxLockUntil": 0
+    },
+    "extraArgs": [
+      "-no-reboot"
+    ]
+  },
+  "lle": {
+    "enabled": true,
+    "firmware": {
+      "roms": [
+        {
+          "path": "roms/example-option.rom",
+          "kind": "option-rom",
+          "required": true,
+          "enabled": true,
+          "qemuArgs": [
+            "-option-rom",
+            "{path}"
+          ],
+          "description": "Example only; supply a legally obtained ROM"
+        }
+      ]
+    },
+    "deviceModels": [
+      {
+        "name": "Debug console",
+        "qemuDevice": "isa-debugcon",
+        "properties": {
+          "iobase": "0x402"
+        },
+        "enabled": true,
+        "description": "Example QEMU device model"
+      }
+    ],
+    "timingClockOptions": {
+      "rtc": "base=utc,clock=host,driftfix=slew",
+      "icount": "",
+      "extraArgs": []
+    },
+    "requiredQemuDevices": [
+      "isa-debugcon",
+      "virtio-net-pci"
+    ],
+    "requiredModules": [],
+    "notes": "This file demonstrates the schema. Referenced images and firmware are intentionally not included.",
+    "instructions": "Copy the required files into images/, firmware/ and roms/, then run validation before launching."
+  }
+}

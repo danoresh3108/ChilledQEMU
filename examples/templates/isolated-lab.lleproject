@@ -1,0 +1,27 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "Isolated analysis lab",
+  "vm": {
+    "architecture": "x86_64",
+    "machine": "q35",
+    "network": {"mode": "none"},
+    "security": {
+      "enabled": true,
+      "profile": "strict",
+      "noUserConfig": true,
+      "noDefaults": true,
+      "disableMonitor": true,
+      "disableSerial": true,
+      "networkIsolation": true,
+      "ephemeralDisks": true,
+      "sandbox": false,
+      "sandboxRequired": false,
+      "sandboxLockUntil": 0
+    }
+  },
+  "lle": {
+    "enabled": false,
+    "notes": "Strict profile: network disabled and disk writes are ephemeral. Use balanced mode when changes must persist."
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "Windows PE ARM64",
+  "vm": {
+    "architecture": "aarch64",
+    "machine": "virt",
+    "accelerator": "hvf",
+    "cpu": {"model": "host", "cores": 2, "sockets": 1, "threads": 1},
+    "memoryMiB": 4096,
+    "storage": {"disks": [], "iso": ""},
+    "network": {"mode": "none"},
+    "video": {"model": "ramfb", "display": "cocoa"},
+    "sound": {"model": "none", "codec": "hda-output", "backend": "coreaudio"},
+    "usb": {"enabled": true, "controller": "qemu-xhci", "devices": ["usb-tablet"]},
+    "firmware": {
+      "mode": "uefi",
+      "bios": "",
+      "uefiCode": "",
+      "uefiVars": "",
+      "pflashFormat": "raw",
+      "uefiCodeReadOnly": true,
+      "uefiVarsReadOnly": false,
+      "secureBoot": false,
+      "smm": false,
+      "bootOrder": "cdn"
+    }
+  },
+  "lle": {
+    "enabled": false,
+    "notes": "Выберите WinPE ARM64 ISO, найдите edk2-aarch64-code.fd и создайте отдельную копию edk2-arm-vars.fd."
+  }
+}

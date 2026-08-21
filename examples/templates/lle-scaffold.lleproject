@@ -1,0 +1,28 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "LLE project scaffold",
+  "vm": {
+    "architecture": "x86_64",
+    "machine": "q35",
+    "firmware": {"mode": "default"}
+  },
+  "lle": {
+    "enabled": true,
+    "firmware": {"roms": []},
+    "deviceModels": [
+      {
+        "name": "Debug console",
+        "qemuDevice": "isa-debugcon",
+        "properties": {"iobase": "0x402"},
+        "enabled": true,
+        "description": "Replace or extend with the exact model required by the project."
+      }
+    ],
+    "timingClockOptions": {"rtc": "", "icount": "", "extraArgs": []},
+    "requiredQemuDevices": ["isa-debugcon"],
+    "requiredModules": [],
+    "notes": "Declare exact ROM, module and device-model dependencies before launch.",
+    "instructions": "Run QEMU / LLE validation and resolve every warning relevant to the target."
+  }
+}

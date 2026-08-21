@@ -1,0 +1,17 @@
+{
+  "format": "qemu-lle-project",
+  "version": 1,
+  "name": "x86_64 BIOS VM",
+  "vm": {
+    "architecture": "x86_64",
+    "machine": "q35",
+    "accelerator": "hvf",
+    "video": {"model": "std", "display": "cocoa"},
+    "firmware": {
+      "mode": "bios",
+      "bios": "",
+      "bootOrder": "cdn"
+    }
+  },
+  "lle": {"enabled": false}
+}
