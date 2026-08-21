@@ -64,12 +64,12 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-For the normal macOS source launch, open the portable `Запустить.command` file. If the folder arrived through Telegram, a browser, or AirDrop and macOS reports that it “is damaged and can't be opened,” remove quarantine from that extracted project folder only:
+For the normal macOS source launch, open the portable `run_macos.command` file. If the folder arrived through Telegram, a browser, or AirDrop and macOS reports that it “is damaged and can't be opened,” remove quarantine from that extracted project folder only:
 
 ```bash
 cd "/path/to/ChilledQEUM"
 xattr -dr com.apple.quarantine .
-/bin/zsh "./Запустить.command"
+/bin/zsh "./run_macos.command"
 ```
 
 To avoid typing the path, type `cd ` with a trailing space, drag the ChilledQEUM folder into Terminal, and press Return. A separate `chmod` command is not required because the launcher repairs its permissions. The `xattr` command above affects only the current extracted folder.
@@ -77,7 +77,7 @@ To avoid typing the path, type `cd ` with a trailing space, drag the ChilledQEUM
 The launcher checks installed Python versions and selects a compatible Python 3.10+. An old interpreter from an active Conda environment will not take over the launch. An incompatible `.venv` is moved to `.venv-incompatible-*`, a fresh environment is created, and pip is upgraded inside it. To force a specific interpreter, use, for example:
 
 ```bash
-CHILLEDQEUM_PYTHON=/usr/local/bin/python3.12 /bin/zsh "./Запустить.command"
+CHILLEDQEUM_PYTHON=/usr/local/bin/python3.12 /bin/zsh "./run_macos.command"
 ```
 
 PySide6 is installed only when needed. First-launch diagnostics are saved to `launcher.log`; send that file when the window does not appear. The same instructions are available in `ПЕРВЫЙ_ЗАПУСК_MACOS.txt`. You can select QEMU explicitly on the General tab; an empty value uses `qemu-system-<architecture>` from `PATH`.
@@ -366,17 +366,17 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Для обычного запуска откройте настоящий переносимый файл `Запустить.command`. Если архив получен через Telegram, браузер или AirDrop и macOS пишет **“is damaged and can’t be opened”**, сначала снимите карантин только с распакованной папки проекта:
+Для обычного запуска откройте настоящий переносимый файл `run_macos.command`. Если архив получен через Telegram, браузер или AirDrop и macOS пишет **“is damaged and can’t be opened”**, сначала снимите карантин только с распакованной папки проекта:
 
 ```bash
 cd "/путь/к/ChilledQEUM"
 xattr -dr com.apple.quarantine .
-/bin/zsh "./Запустить.command"
+/bin/zsh "./run_macos.command"
 ```
 
 Удобный способ не печатать путь: введите в Terminal `cd ` с пробелом, перетащите туда папку ChilledQEUM и нажмите Enter. Затем выполните последние две команды. `chmod` отдельно вводить не требуется: новый запускатель выставляет права сам. Команда `xattr` здесь действует только на текущую распакованную папку, а не на весь Mac.
 
-Скрипт перебирает установленные версии и выбирает совместимый Python 3.10+; старый Python из активированного Conda больше не перехватывает запуск. Несовместимый `.venv` переносится в резервную папку `.venv-incompatible-*`, затем pip обновляется внутри нового окружения. Если нужно принудительно указать конкретную версию, выполните, например, `CHILLEDQEUM_PYTHON=/usr/local/bin/python3.12 /bin/zsh "./Запустить.command"`.
+Скрипт перебирает установленные версии и выбирает совместимый Python 3.10+; старый Python из активированного Conda больше не перехватывает запуск. Несовместимый `.venv` переносится в резервную папку `.venv-incompatible-*`, затем pip обновляется внутри нового окружения. Если нужно принудительно указать конкретную версию, выполните, например, `CHILLEDQEUM_PYTHON=/usr/local/bin/python3.12 /bin/zsh "./run_macos.command"`.
 
 После этого скрипт устанавливает PySide6 только при необходимости и запускает приложение. Весь вывод первого запуска сохраняется в `launcher.log`: если окно не появилось, пришлите этот файл. Та же инструкция лежит в `ПЕРВЫЙ_ЗАПУСК_MACOS.txt`. QEMU можно указать явно на вкладке «Основное»; при пустом поле используется `qemu-system-<architecture>` из `PATH`.
 
