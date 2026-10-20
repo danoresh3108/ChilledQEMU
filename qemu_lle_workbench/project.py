@@ -37,6 +37,7 @@ def default_project() -> dict[str, Any]:
             "sound": {"model": "none", "codec": "hda-output", "backend": "coreaudio"},
             "usb": {"enabled": True, "controller": "qemu-xhci", "devices": ["usb-tablet"]},
             "firmware": {
+                "realUefiDump": False,
                 "mode": "default",
                 "bios": "",
                 "uefiCode": "",

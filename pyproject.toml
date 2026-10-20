@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qemu-lle-workbench"
+name = "ChilledQEMU"
 version = "0.8.0"
 description = "Desktop QEMU project editor with explicit LLE dependency metadata"
 readme = "README.md"

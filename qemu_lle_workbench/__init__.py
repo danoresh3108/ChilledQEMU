@@ -1,3 +1,3 @@
-"""QEMU LLE Workbench package."""
+"""ChilledQEMU package."""
 
 __version__ = "0.8.0"

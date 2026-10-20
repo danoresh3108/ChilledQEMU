@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -24,10 +25,133 @@ from PySide6.QtWidgets import (
 ORGANIZATION = "ChilledQEUM"
 APPLICATION = "ChilledQEUM"
 LANGUAGE_KEY = "ui/language"
-SUPPORTED_LANGUAGES = {"system", "ru", "en"}
+SUPPORTED_LANGUAGES = {"system", "ru", "en", "ru-y"}
+
+ABSURDIST = {
+    'Основное': 'Главный пульт огурца ы',
+    'Накопители': 'Склад цифровой картошки ы',
+    'Устройства': 'Железные граждане ы',
+    'Firmware': 'Древние свитки загрузки ы',
+    'Безопасность': 'Каска для виртуального жильца ы',
+    'Трассировка': 'Следствие ведут транзисторы ы',
+    'Дополнительно': 'Подвал неизвестных тумблеров ы',
+    'LLE Project': 'Министерство низких уровней ы',
+    'Запуск и проверка': 'Испытательный полигон чайника ы',
+    'Файл': 'Бумажка ы',
+    'Новый': 'Выдать новую коробку ы',
+    'Открыть / импортировать…': 'Впустить коробку из файла… ы',
+    'Сохранить': 'Законсервировать настройки ы',
+    'Сохранить / экспортировать как…': 'Законсервировать под новым именем… ы',
+    'Выход': 'Закрыть министерство ы',
+    'Заготовки': 'Полуфабрикаты виртуальности ы',
+    'Настройки': 'Министерство тумблеров ы',
+    'Общие настройки': 'Общее министерство тумблеров ы',
+    'Общие настройки…': 'Открыть министерство тумблеров… ы',
+    'Язык': 'Наречие транзисторов ы',
+    'Справка': 'Спросить у дежурного огурца ы',
+    'О программе': 'Паспорт электрической коробки ы',
+    'Виртуальные машины': 'Коробки с электрическими жильцами ы',
+    'Новый проект': 'Новая коробка без прописки ы',
+    'Имя ВМ': 'Кличка электрического жильца ы',
+    'Архитектура': 'Порода транзисторов ы',
+    'Ускоритель': 'Педаль виртуального газа ы',
+    'Модель': 'Порода железного гражданина ы',
+    'Ядра': 'Мозговые картофелины ы',
+    'Сокеты': 'Гнёзда для мозгов ы',
+    'Потоки': 'Очереди мыслей ы',
+    'Готовый выбор': 'Рецепт от дежурного огурца ы',
+    'Применить профиль': 'Исполнить рецепт огурца ы',
+    'Запустить': 'Разбудить электрического жильца ы',
+    'Запустить QEMU': 'Разбудить QEMU-жильца ы',
+    'Остановить': 'Уложить жильца спать ы',
+    'Проверить QEMU / LLE': 'Проверить документы железных граждан ы',
+    'Создать диск…': 'Вырастить цифровую картофелину… ы',
+    'Добавить диск…': 'Подселить цифровую картофелину… ы',
+    'Готово': 'Огурец доложил: готово ы',
+    'Работает': 'Жилец шуршит транзисторами ы',
+    'Выключена': 'Жилец спит ы',
+    'Монитор ВМ': 'Окошко к электрическому жильцу ы',
+    'Светлая': 'Дневная смена огурца ы',
+    'Тёмная': 'Ночная смена огурца ы',
+    'Системная': 'Как велит главный компьютер ы',
+    'Лёгкий режим — скрыть расширенные вкладки': 'Лёгкий режим — спрятать подвальные тумблеры ы',
+}
 
 
 ENGLISH: dict[str, str] = {
+    'Общие настройки': 'General settings',
+    'Общие настройки…': 'General settings…',
+    'Лёгкий режим — скрыть расширенные вкладки': 'Easy mode — hide advanced tabs',
+    'Системная': 'System',
+    'Светлая': 'Light',
+    'Тёмная': 'Dark',
+    'Тема': 'Theme',
+    'Системный размер': 'System size',
+    'Размер шрифта': 'Font size',
+    'Максимум строк консоли': 'Maximum console lines',
+    'Автопрокрутка консоли': 'Auto-scroll console',
+    'Виртуальные машины': 'Virtual machines',
+    'Добавить .lleproject…': 'Add .lleproject…',
+    'Монитор ВМ': 'VM display',
+    'Работает': 'Running',
+    'Выключена': 'Powered off',
+    'Остановите ВМ перед переключением проекта.': 'Stop the VM before switching projects.',
+    'Для смены режима монитора перезапустите ВМ.': 'Restart the VM to change display mode.',
+    'Отдельное окно QEMU': 'Separate QEMU window',
+    'Внутри ChilledQEMU': 'Inside ChilledQEMU',
+    'Отдельное окно монитора': 'Separate display window',
+    'Монитор внутри ChilledQEMU': 'Display inside ChilledQEMU',
+    'Монитор отдельным окном': 'Display in separate window',
+    "Дамп UEFI требует режима uefi.": "A UEFI dump requires uefi mode.",
+    "Дамп UEFI*: включите LLE Project.": "UEFI dump*: enable LLE Project.",
+    "Дамп UEFI*: заполните обязательные устройства QEMU в LLE Project.": "UEFI dump*: fill in required QEMU devices in LLE Project.",
+    "Дамп UEFI*: укажите плату, chipset и карту flash в заметках LLE Project.": "UEFI dump*: describe the board, chipset and flash map in LLE Project notes.",
+    "Дамп UEFI*: заполните инструкции подключения в LLE Project.": "UEFI dump*: fill in attachment instructions in LLE Project.",
+    "Исходный дамп UEFI должен подключаться только для чтения.": "The source UEFI dump must be attached read-only.",
+    "Дамп реального UEFI: наличие файлов и устройств не доказывает совместимость платы. Полный SPI-дамп не равен OVMF code/vars. Проверьте flash layout и ROM/модули в LLE Project.": "Real hardware UEFI dump: file and device availability does not establish board compatibility. A full SPI dump is not an OVMF code/vars pair. Check the flash layout and ROM/module dependencies in LLE Project.",
+    "Применить профиль": "Apply preset",
+    "Готовый выбор": "Preset",
+    "Без сети": "No network",
+    "Без видео": "No video",
+    "Без звука": "No audio",
+    "Без USB": "No USB",
+    "Дамп реального UEFI*": "Real hardware UEFI dump*",
+    "Firmware по умолчанию": "Default firmware",
+    "Встроенный BIOS (x86)": "Built-in BIOS (x86)",
+    "Выберите дамп UEFI": "Select UEFI dump",
+    "Этот профиль требует архитектуру x86.": "This preset requires an x86 architecture.",
+    "Для этого профиля выберите machine q35.": "Select machine q35 for this preset.",
+    "Опишите способ подключения flash, карту памяти и необходимые модули.": "Describe flash attachment, memory layout and required modules.",
+    "* Для реального UEFI заполните LLE Project: обязательные устройства QEMU, ROM/модули при необходимости, заметки о плате и инструкции подключения. Нужны модель платы и корректная карта flash. Полный SPI-дамп может требовать извлечения BIOS region; автоматически он не преобразуется в OVMF code/vars. Совместимость не гарантируется.": "* For real hardware UEFI, fill in LLE Project: required QEMU devices, any required ROMs/modules, board notes and attachment instructions. A compatible board model and correct flash layout are needed. A full SPI dump may require extracting the BIOS region; it is not automatically converted into OVMF code/vars. Compatibility is not guaranteed.",
+    "Каталог Intel / AMD": "Intel / AMD catalog",
+    "Каталог Intel / AMD…": "Intel / AMD catalog…",
+    "Семейство CPU": "CPU family",
+    "Поколение / серия": "Generation / series",
+    "Модель QEMU": "QEMU model",
+    "Семейство / поколение": "Family / generation",
+    "Модель недоступна": "Model unavailable",
+    "Выбранная модель отсутствует в QEMU -cpu help:": "The selected model is missing from QEMU -cpu help:",
+    "Выберите архитектуру x86_64 или i386. Для ARM используйте список моделей CPU.": "Choose x86_64 or i386. For ARM use the CPU model list.",
+    "Приближение по архитектуре, а не точная копия i3/i5/i7/i9 или Ryzen. Частоты, кэш, iGPU и производительность реального CPU не воспроизводятся. Поколения без подходящей модели QEMU не включены. Ядра и потоки настраиваются отдельно.": "An architecture approximation, not an exact i3/i5/i7/i9 or Ryzen replica. Real CPU frequencies, cache, iGPU and performance are not reproduced. Generations without a suitable QEMU model are omitted. Configure cores and threads separately.",
+    "Память ВМ": "VM memory",
+    "Отладка памяти при следующем запуске": "Enable memory debugging on next VM start",
+    "Редактировать участок памяти…": "Edit memory region…",
+    "Сделать дамп памяти…": "Dump memory…",
+    "Физический адрес (например 0x40000000 для RAM ARM virt):": "Physical address (for example 0x40000000 for ARM virt RAM):",
+    "Размер в байтах:": "Size in bytes:",
+    "Недопустимый адрес памяти": "Invalid memory address",
+    "HEX-байты (сохраните размер; запись может повредить состояние гостя):": "HEX bytes (keep the size; writing may corrupt guest state):",
+    "Количество байтов должно совпадать с размером участка.": "The byte count must match the region size.",
+    "Записать память?": "Write memory?",
+    "Записать изменённые байты в память запущенной ВМ?": "Write the modified bytes into the running VM's memory?",
+    "Память записана и проверена.": "Memory written and verified.",
+    "Ошибка доступа к памяти": "Memory access error",
+    "Дамп памяти сохранён:": "Memory dump saved:",
+    "Отладка памяти требует разрешить monitor/QMP на вкладке безопасности.": "Memory debugging requires enabling monitor/QMP on the Security tab.",
+    "Отладка памяти пока доступна только на macOS и Linux.": "Memory debugging is currently available on macOS and Linux only.",
+    "Уберите конфликтующие дополнительные параметры QMP/GDB.": "Remove conflicting extra QMP/GDB arguments.",
+    "Включите отладку памяти, разрешите monitor/QMP на вкладке безопасности и перезапустите ВМ.": "Enable memory debugging, allow monitor/QMP on the Security tab, and restart the VM.",
+    "Требует разрешённого monitor/QMP. Локальные сокеты доступны только вашему пользователю. Действует только для текущего сеанса приложения.": "Requires monitor/QMP. Private local sockets are accessible only to your user. Applies only to the current application session.",
     "Готово": "Ready",
     "Все файлы": "All files",
     "Обзор…": "Browse…",
@@ -291,6 +415,15 @@ def effective_language(preference: str | None = None) -> str:
 
 def tr(value: object) -> str:
     text = str(value)
+    if effective_language() == 'ru-y':
+        # Language names, paths, argv and QEMU model identifiers stay recognizable.
+        if text in {'Русский', 'Российский ы', 'English', 'Системный язык'}:
+            return text
+        if text in ABSURDIST.values() or text.endswith(' ы'):
+            return text
+        if text in ABSURDIST:
+            return ABSURDIST[text]
+        return text + ' ы' if re.search('[А-Яа-яЁё]', text) else text
     if effective_language() != "en":
         return text
     if text in ENGLISH:
@@ -311,10 +444,11 @@ def ask_first_run_language() -> str:
     box.setText("Choose the application language\nВыберите язык программы")
     system_button = box.addButton("Use system / Системный", QMessageBox.ButtonRole.AcceptRole)
     russian_button = box.addButton("Русский", QMessageBox.ButtonRole.ActionRole)
+    absurd_button = box.addButton("Российский ы", QMessageBox.ButtonRole.ActionRole)
     english_button = box.addButton("English", QMessageBox.ButtonRole.ActionRole)
     box.exec()
     clicked = box.clickedButton()
-    selected = "ru" if clicked is russian_button else "en" if clicked is english_button else "system"
+    selected = "ru-y" if clicked is absurd_button else "ru" if clicked is russian_button else "en" if clicked is english_button else "system"
     set_language_preference(selected)
     return selected
 
@@ -325,7 +459,7 @@ def resource_path(relative: str) -> Path:
 
 
 def localize_widget_tree(root: QWidget) -> None:
-    if effective_language() != "en":
+    if effective_language() not in {"en", "ru-y"}:
         return
     root.setWindowTitle(tr(root.windowTitle()))
     for widget in [root, *root.findChildren(QWidget)]:

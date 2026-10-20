@@ -40,11 +40,17 @@ CPU_PRESETS: dict[str, list[str]] = {
     "x86_64": [
         "host", "max", "qemu64", "kvm64", "Haswell", "Broadwell",
         "Skylake-Client", "Cascadelake-Server", "EPYC", "EPYC-Rome", "EPYC-Milan",
+        "486", "pentium", "pentium2", "pentium3", "coreduo", "core2duo",
+        "Conroe", "Penryn", "Nehalem", "Westmere", "SandyBridge", "IvyBridge",
+        "Skylake-Server", "Icelake-Client", "Icelake-Server", "Cooperlake",
+        "SapphireRapids", "GraniteRapids", "EPYC-Genoa", "EPYC-Turin",
+        "athlon", "Opteron_G1", "Opteron_G2", "Opteron_G3", "Opteron_G4", "Opteron_G5",
     ],
     "i386": ["host", "max", "qemu32", "kvm32", "pentium3", "core2duo"],
     "aarch64": [
         "host", "max", "cortex-a53", "cortex-a57", "cortex-a72", "cortex-a76",
-        "neoverse-n1", "neoverse-n2", "a64fx",
+        "neoverse-n1", "neoverse-n2", "a64fx", "neoverse-v1",
+        "cortex-a35", "cortex-a55", "cortex-a710", "cortex-a78ae",
     ],
     "arm": ["max", "cortex-a7", "cortex-a8", "cortex-a9", "cortex-a15", "arm1176"],
     "riscv64": ["max", "rv64", "sifive-u54"],
@@ -67,6 +73,10 @@ VIDEO_PRESETS = [
     "qxl-vga",
     "cirrus-vga",
     "vmware-svga",
+    "ati-vga",
+    "isa-vga",
+    "isa-cirrus-vga",
+    "secondary-vga",
     "std",
     "qxl",
     "cirrus",
@@ -76,19 +86,20 @@ VIDEO_PRESETS = [
 
 NETWORK_MODEL_PRESETS = [
     "virtio-net-pci", "virtio-net-device", "e1000", "e1000e", "rtl8139",
-    "igb", "vmxnet3", "usb-net",
+    "igb", "vmxnet3", "usb-net", "e1000-82544gc", "e1000-82545em",
+    "ne2k_pci", "ne2k_isa", "pcnet", "tulip",
 ]
 
 SOUND_MODEL_PRESETS = [
     "none", "ich9-intel-hda", "intel-hda", "virtio-sound-pci",
-    "virtio-sound-device", "AC97", "ES1370", "usb-audio",
+    "virtio-sound-device", "AC97", "ES1370", "usb-audio", "sb16", "gus", "cs4231a",
 ]
 
 SOUND_CODEC_PRESETS = ["hda-output", "hda-duplex", "hda-micro"]
 
 USB_CONTROLLER_PRESETS = [
     "qemu-xhci", "nec-usb-xhci", "usb-ehci", "piix3-usb-uhci",
-    "piix4-usb-uhci", "pci-ohci",
+    "piix4-usb-uhci", "pci-ohci", "ich9-usb-ehci1", "ich9-usb-ehci2",
 ]
 
 
@@ -742,6 +753,19 @@ def validate_firmware(
     firmware = vm.get("firmware", {})
     mode = _clean(firmware.get("mode")) or "default"
     issues: list[ValidationIssue] = []
+    if firmware.get('realUefiDump'):
+        lle = project.get('lle', {})
+        requirements = (
+            (mode == 'uefi', 'Дамп UEFI требует режима uefi.'),
+            (lle.get('enabled'), 'Дамп UEFI*: включите LLE Project.'),
+            (bool(lle.get('requiredQemuDevices')), 'Дамп UEFI*: заполните обязательные устройства QEMU в LLE Project.'),
+            (bool(_clean(lle.get('notes'))), 'Дамп UEFI*: укажите плату, chipset и карту flash в заметках LLE Project.'),
+            (bool(_clean(lle.get('instructions'))), 'Дамп UEFI*: заполните инструкции подключения в LLE Project.'),
+            (firmware.get('uefiCodeReadOnly', True), 'Исходный дамп UEFI должен подключаться только для чтения.'),
+        )
+        issues.extend(ValidationIssue('error', 'LLE / UEFI', message) for valid, message in requirements if not valid)
+        issues.append(ValidationIssue('warning', 'LLE / UEFI',
+            'Дамп реального UEFI: наличие файлов и устройств не доказывает совместимость платы. Полный SPI-дамп не равен OVMF code/vars. Проверьте flash layout и ROM/модули в LLE Project.'))
     if mode == "default":
         issues.append(ValidationIssue("ok", "Firmware", "Используется firmware по умолчанию выбранной machine."))
         return issues

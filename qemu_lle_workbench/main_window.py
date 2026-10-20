@@ -5,11 +5,13 @@ import shlex
 import shutil
 import sys
 import time
+import tempfile
+import os
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QProcess, QTimer, Qt, QUrl
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QFontDatabase, QTextCursor
+from PySide6.QtCore import QProcess, QTimer, Qt, QUrl, QStandardPaths, QSize
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QFontDatabase, QTextCursor, QFont, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -22,6 +24,11 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
+    QListWidget,
+    QListWidgetItem,
+    QDockWidget,
+    QStyle,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -39,6 +46,11 @@ from PySide6.QtWidgets import (
 )
 
 from .disk import DiskImageError, SUPPORTED_DISK_FORMATS, create_disk_image
+from .memory import MemoryAccess
+from .cpu_catalog import CPU_CATALOG
+from .library import VmLibrary
+from .screen import GuestScreen
+from .preferences import PreferencesDialog, read_preferences, apply_theme
 from .i18n import (
     language_preference,
     localize_widget_tree,
@@ -104,20 +116,34 @@ class QMessageBox(QtMessageBox):
     """Translate every modal message, including dynamically formatted diagnostics."""
 
     @staticmethod
-    def information(parent: QWidget | None, title: str, text: str, *args: Any, **kwargs: Any) -> Any:
-        return QtMessageBox.information(parent, tr(title), tr(text), *args, **kwargs)
+    def _show(icon, parent, title, text, buttons, defaultButton):
+        box = QtMessageBox(parent)
+        # Also covers embedded use where main() did not configure QApplication.
+        box.setOption(QtMessageBox.Option.DontUseNativeDialog, True)
+        box.setIcon(icon)
+        box.setWindowTitle(tr(title))
+        box.setTextFormat(Qt.PlainText)
+        box.setText(tr(text))
+        box.setStandardButtons(buttons)
+        if defaultButton != QtMessageBox.NoButton:
+            box.setDefaultButton(defaultButton)
+        return QtMessageBox.StandardButton(box.exec())
 
     @staticmethod
-    def warning(parent: QWidget | None, title: str, text: str, *args: Any, **kwargs: Any) -> Any:
-        return QtMessageBox.warning(parent, tr(title), tr(text), *args, **kwargs)
+    def information(parent, title, text, buttons=QtMessageBox.Ok, defaultButton=QtMessageBox.NoButton):
+        return QMessageBox._show(QtMessageBox.Information, parent, title, text, buttons, defaultButton)
 
     @staticmethod
-    def critical(parent: QWidget | None, title: str, text: str, *args: Any, **kwargs: Any) -> Any:
-        return QtMessageBox.critical(parent, tr(title), tr(text), *args, **kwargs)
+    def warning(parent, title, text, buttons=QtMessageBox.Ok, defaultButton=QtMessageBox.NoButton):
+        return QMessageBox._show(QtMessageBox.Warning, parent, title, text, buttons, defaultButton)
 
     @staticmethod
-    def question(parent: QWidget | None, title: str, text: str, *args: Any, **kwargs: Any) -> Any:
-        return QtMessageBox.question(parent, tr(title), tr(text), *args, **kwargs)
+    def critical(parent, title, text, buttons=QtMessageBox.Ok, defaultButton=QtMessageBox.NoButton):
+        return QMessageBox._show(QtMessageBox.Critical, parent, title, text, buttons, defaultButton)
+
+    @staticmethod
+    def question(parent, title, text, buttons=QtMessageBox.Yes | QtMessageBox.No, defaultButton=QtMessageBox.NoButton):
+        return QMessageBox._show(QtMessageBox.Question, parent, title, text, buttons, defaultButton)
 
 
 class QFileDialog(QtFileDialog):
@@ -155,6 +181,35 @@ class PathField(QWidget):
         self.edit.setText(str(value or ""))
 
 
+class CpuCatalogDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Каталог Intel / AMD"))
+        self.setMinimumWidth(650)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.family = QComboBox(); self.family.addItems(CPU_CATALOG)
+        self.generation = QComboBox()
+        self.model_label = QLabel()
+        form.addRow(tr("Семейство CPU"), self.family)
+        form.addRow(tr("Поколение / серия"), self.generation)
+        form.addRow(tr("Модель QEMU"), self.model_label)
+        layout.addLayout(form)
+        note = QLabel(tr("Приближение по архитектуре, а не точная копия i3/i5/i7/i9 или Ryzen. Частоты, кэш, iGPU и производительность реального CPU не воспроизводятся. Поколения без подходящей модели QEMU не включены. Ядра и потоки настраиваются отдельно."))
+        note.setWordWrap(True); layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.family.currentTextChanged.connect(self._refresh)
+        self.generation.currentIndexChanged.connect(lambda: self.model_label.setText(self.generation.currentData() or ''))
+        self._refresh()
+
+    def _refresh(self, *_args):
+        self.generation.clear()
+        for label, model in CPU_CATALOG[self.family.currentText()]:
+            self.generation.addItem(label, model)
+
+
 class CreateDiskDialog(QDialog):
     def __init__(self, initial_directory: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -175,6 +230,20 @@ class CreateDiskDialog(QDialog):
         size_layout.addWidget(self.size_spin, 1); size_layout.addWidget(self.size_unit)
         self.interface_combo = QComboBox(); self.interface_combo.addItems(["virtio", "nvme", "scsi", "ide", "sd", "usb"])
         self.description_edit = QLineEdit("Системный диск")
+        preset = QComboBox()
+        preset.addItem(tr("Готовый выбор"), None)
+        for label, values in [('QCOW2 / VirtIO / 64 GiB', ('qcow2', 'virtio', 64)),
+                              ('RAW / SATA-IDE / 32 GiB', ('raw', 'ide', 32)),
+                              ('QCOW2 / NVMe / 128 GiB', ('qcow2', 'nvme', 128)),
+                              ('VMDK / SCSI / 64 GiB', ('vmdk', 'scsi', 64))]:
+            preset.addItem(label, values)
+        def apply_disk_preset():
+            values = preset.currentData()
+            if values is None: return
+            _combo(self.format_combo, values[0]); _combo(self.interface_combo, values[1])
+            self.size_unit.setCurrentText('GiB'); self.size_spin.setValue(values[2])
+        preset.activated.connect(lambda *_: apply_disk_preset())
+        form.addRow(tr("Готовый выбор"), preset)
 
         form.addRow("Файл образа", path_row); form.addRow("Формат", self.format_combo)
         form.addRow("Виртуальный размер", size_row); form.addRow("Интерфейс", self.interface_combo)
@@ -228,13 +297,19 @@ class CreateDiskDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("QEMU LLE Workbench")
+        self.setWindowTitle("ChilledQEMU")
         self.resize(1180, 800)
         self.current_file: Path | None = None
         self._detected_vars_template: Path | None = None
         self._sandbox_lock_until = 0.0
         self._sandbox_ui_guard = False
         self._running_with_sandbox = False
+        self._memory_directory = None
+        self._memory_access = None
+        self._screen_directory = None
+        self._library = None
+        self._system_palette = QPalette(QApplication.palette())
+        self._system_font = QFont(QApplication.font())
         self.dirty = False
         self.loading = False
         self.trace_timer = QTimer(self); self.trace_timer.setInterval(1000)
@@ -246,9 +321,19 @@ class MainWindow(QMainWindow):
         self.process.readyReadStandardOutput.connect(self._read_process_output)
         self.process.started.connect(self._process_started)
         self.process.finished.connect(self._process_finished)
+        self.process.errorOccurred.connect(self._process_error)
 
         self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+        central = QSplitter()
+        sidebar = QWidget(); sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.addWidget(QLabel(tr('Виртуальные машины')))
+        self.vm_list = QListWidget(); sidebar_layout.addWidget(self.vm_list)
+        self.vm_list.setIconSize(QSize(32,32)); self.vm_list.setSpacing(4)
+        add_vm = QPushButton(tr('Добавить .lleproject…')); add_vm.clicked.connect(self.open_project)
+        sidebar_layout.addWidget(add_vm)
+        central.addWidget(sidebar); central.addWidget(self.tabs)
+        central.setStretchFactor(1, 1); central.setSizes([240, 940])
+        self.setCentralWidget(central)
         self._make_general_tab()
         self._make_storage_tab()
         self._make_devices_tab()
@@ -258,13 +343,137 @@ class MainWindow(QMainWindow):
         self._make_advanced_tab()
         self._make_lle_tab()
         self._make_console_tab()
+        self._expert_pages = [self.tabs.widget(index) for index in (4,5,6,7)]
         self._make_actions()
+        self.screen = GuestScreen(self)
+        self.screen_dock = QDockWidget(tr('Монитор ВМ'), self)
+        self.screen_dock.setWidget(self.screen)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.screen_dock); self.screen_dock.hide()
         localize_widget_tree(self)
         self._connect_change_signals()
         self.set_project(default_project())
+        self.vm_list.itemClicked.connect(self._select_library_vm)
+        self._load_library()
+        self._apply_preferences()
         self.statusBar().showMessage(tr("Готово"))
 
+    def _apply_preferences(self):
+        preferences = read_preferences()
+        apply_theme(QApplication.instance(), preferences['theme'], self._system_palette)
+        font = QFont(self._system_font)
+        if preferences['fontSize']: font.setPointSize(preferences['fontSize'])
+        QApplication.setFont(font)
+        self.console.setMaximumBlockCount(preferences['logLines'])
+        self._auto_scroll = preferences['autoScroll']
+        for page in self._expert_pages:
+            self.tabs.setTabVisible(self.tabs.indexOf(page), not preferences['simple'])
+
+    def show_preferences(self):
+        dialog = PreferencesDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            dialog.save(); self._apply_preferences()
+
+    def _load_library(self):
+        root = Path(__file__).resolve().parent.parent if not getattr(sys, 'frozen', False) else Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation))
+        path = Path(os.environ.get('CHILLEDQEMU_LIBRARY_PATH', str(root / 'virtual_machines.json')))
+        try:
+            self._library = VmLibrary(path)
+            self._refresh_library()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.console.appendPlainText(f'virtual_machines.json: {exc}')
+
+    def _refresh_library(self):
+        self.vm_list.clear()
+        if self._library is None: return
+        for entry in self._library.entries:
+            active = self.current_file and str(self.current_file.resolve()) == entry['path']
+            state = tr('Работает') if active and self.process.state() != QProcess.NotRunning else tr('Выключена')
+            item = QListWidgetItem(f"{entry['project']['name']}\n{state}")
+            item.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+            item.setSizeHint(QSize(180,64))
+            item.setData(Qt.UserRole, entry['path']); item.setToolTip(entry['path'])
+            self.vm_list.addItem(item)
+            if active: self.vm_list.setCurrentItem(item)
+        if self.current_file is None: self.vm_list.setCurrentRow(-1)
+
+    def _remember_vm(self):
+        if self._library is None or self.current_file is None: return
+        try:
+            self._library.remember(self.current_file, self.collect_project())
+            self._refresh_library()
+        except (OSError, ValueError) as exc:
+            self.console.appendPlainText(f'virtual_machines.json: {exc}')
+
+    def _can_switch_vm(self):
+        if self.process.state() != QProcess.NotRunning:
+            QMessageBox.warning(self, tr('Виртуальные машины'), tr('Остановите ВМ перед переключением проекта.'))
+            self._refresh_library(); return False
+        return self._confirm_discard()
+
+    def _select_library_vm(self, item):
+        path = Path(item.data(Qt.UserRole))
+        if self.current_file and path == self.current_file.resolve(): return
+        if not self._can_switch_vm():
+            self._refresh_library(); return
+        try:
+            project = load_project(path)
+        except ProjectError as exc:
+            QMessageBox.warning(self, tr('Ошибка импорта'), str(exc)); self._refresh_library(); return
+        self.current_file = path; self.set_project(project); self._remember_vm()
+
+    def show_guest_screen(self, floating):
+        if self.process.state() == QProcess.NotRunning:
+            self.monitor_mode.setCurrentIndex(2 if floating else 1)
+        elif self._screen_directory is None:
+            QMessageBox.information(self, tr('Монитор ВМ'), tr('Для смены режима монитора перезапустите ВМ.')); return
+        self.screen_dock.setFloating(floating)
+        self.screen_dock.show(); self.screen_dock.raise_()
+
+    def _screen_command(self, command, preview=False):
+        if self.monitor_mode.currentData() == 'native': return command
+        if sys.platform == 'win32': raise ValueError('Embedded monitor currently requires macOS/Linux')
+        if any(token.split('=')[0] in {'-vnc', '-spice'} for token in command):
+            raise ValueError('Remove conflicting VNC/SPICE arguments')
+        if preview:
+            path = '/tmp/chilled-screen-SESSION/vnc'
+        else:
+            self._screen_directory = tempfile.TemporaryDirectory(prefix='cqscreen-')
+            path = str(Path(self._screen_directory.name) / 'vnc')
+        args = list(command)
+        if '-display' in args:
+            index = args.index('-display'); del args[index:index+2]
+        return args + ['-display', 'none', '-vnc', f'unix:{path}']
+
     # --- UI construction -------------------------------------------------
+    def _preset_row(self, form, choices, apply):
+        row = QWidget(); layout = QHBoxLayout(row); layout.setContentsMargins(0, 0, 0, 0)
+        combo = QComboBox()
+        for key, label in choices:
+            combo.addItem(tr(label), key)
+        button = QPushButton(tr("Применить профиль"))
+        button.clicked.connect(lambda: apply(combo.currentData()))
+        layout.addWidget(combo, 1); layout.addWidget(button)
+        form.addRow(tr("Готовый выбор"), row)
+
+    def _apply_device_preset(self, group, key):
+        presets = {
+            'network': {'off': ('none', 'virtio-net-pci'), 'virtio': ('user', 'virtio-net-pci'),
+                'intel': ('user', 'e1000e'), 'realtek': ('user', 'rtl8139'), 'amd': ('user', 'pcnet')},
+            'video': {'virtio': 'virtio', 'basic': 'ramfb', 'vga': 'VGA', 'ati': 'ati-vga', 'off': 'none'},
+            'sound': {'off': 'none', 'hda': 'intel-hda', 'ac97': 'AC97', 'sb16': 'sb16'},
+            'usb': {'tablet': ['usb-tablet'], 'keyboard': ['usb-kbd', 'usb-mouse'], 'off': []},
+        }
+        value = presets[group][key]
+        if group == 'network':
+            _combo(self.net_mode, value[0]); _combo(self.net_model, value[1])
+        elif group == 'video': _combo(self.video_model, value)
+        elif group == 'sound':
+            _combo(self.sound_model, value); _combo(self.sound_codec, 'hda-output')
+        elif group == 'usb':
+            self.usb_enabled.setChecked(key != 'off')
+            _combo(self.usb_controller, 'qemu-xhci'); _set_lines(self.usb_devices, value)
+        self._changed()
+
     def _make_general_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -304,8 +513,14 @@ class MainWindow(QMainWindow):
         form.addRow("Machine", self.machine_combo)
         form.addRow("Ускоритель", self.accel_combo)
         form.addRow("CPU", cpu_row)
+        catalog = QPushButton(tr("Каталог Intel / AMD…"))
+        catalog.clicked.connect(self.choose_catalog_cpu)
+        form.addRow(tr("Семейство / поколение"), catalog)
         form.addRow("RAM", self.memory_spin)
+        self._preset_row(form, [(str(size), f'RAM: {size} MiB') for size in (512, 1024, 2048, 4096, 8192, 16384, 32768)], lambda key: self.memory_spin.setValue(int(key)))
         layout.addLayout(form)
+        preferences = QPushButton(tr('Общие настройки…')); preferences.clicked.connect(self.show_preferences)
+        layout.addWidget(preferences)
         note = QLabel(
             "На macOS обычно используется HVF. Доступность выбранной machine и устройств проверяется "
             "кнопкой «Проверить QEMU / LLE»."
@@ -406,12 +621,20 @@ class MainWindow(QMainWindow):
         form2.addRow("Видео", self.video_model); form2.addRow("Display", self.display_combo)
         form2.addRow("Звуковое устройство", self.sound_model); form2.addRow("HDA-кодек", self.sound_codec)
         form2.addRow("Audio backend", self.sound_backend)
+        self.monitor_mode = QComboBox()
+        for label, key in [('Отдельное окно QEMU', 'native'), ('Внутри ChilledQEMU', 'embedded'), ('Отдельное окно монитора', 'floating')]:
+            self.monitor_mode.addItem(tr(label), key)
+        form2.addRow(tr('Монитор ВМ'), self.monitor_mode)
 
         usb = QGroupBox("USB"); form3 = QFormLayout(usb)
         self.usb_enabled = QCheckBox("Добавить USB-контроллер и устройства")
         self.usb_controller = QComboBox(); self.usb_controller.setEditable(True); self.usb_controller.addItems(USB_CONTROLLER_PRESETS)
         self.usb_devices = QPlainTextEdit(); self.usb_devices.setMaximumHeight(90); self.usb_devices.setPlaceholderText("usb-tablet\nusb-kbd")
         form3.addRow(self.usb_enabled); form3.addRow("Контроллер", self.usb_controller); form3.addRow("Устройства", self.usb_devices)
+        self._preset_row(form, [('off', 'Без сети'), ('virtio', 'VirtIO NAT'), ('intel', 'Intel 82574L Ethernet'), ('realtek', 'Realtek RTL8139'), ('amd', 'AMD PCnet')], lambda key: self._apply_device_preset('network', key))
+        self._preset_row(form2, [('virtio', 'VirtIO GPU'), ('basic', 'RAM framebuffer'), ('vga', 'Standard VGA'), ('ati', 'ATI VGA'), ('off', 'Без видео')], lambda key: self._apply_device_preset('video', key))
+        self._preset_row(form2, [('off', 'Без звука'), ('hda', 'Intel HDA output'), ('ac97', 'AC97'), ('sb16', 'Sound Blaster 16')], lambda key: self._apply_device_preset('sound', key))
+        self._preset_row(form3, [('tablet', 'USB tablet'), ('keyboard', 'USB keyboard + mouse'), ('off', 'Без USB')], lambda key: self._apply_device_preset('usb', key))
         load_devices = QPushButton("Загрузить модели устройств из установленного QEMU…")
         load_devices.clicked.connect(self.detect_device_models)
         layout.addWidget(network, 0, 0, 2, 1); layout.addWidget(graphics, 0, 1); layout.addWidget(usb, 1, 1)
@@ -431,6 +654,9 @@ class MainWindow(QMainWindow):
         self.secure_boot = QCheckBox("проект требует Secure Boot firmware")
         self.smm_enabled = QCheckBox("добавить smm=on к machine (обычно для q35 Secure Boot)")
         self.boot_order = QLineEdit(); self.boot_order.setPlaceholderText("cdn")
+        self.real_uefi_dump = QCheckBox(tr("Дамп реального UEFI*"))
+        self._preset_row(form, [('default', 'Firmware по умолчанию'), ('bios', 'Встроенный BIOS (x86)'), ('uefi', 'UEFI OVMF / EDK2'), ('secure', 'UEFI Secure Boot (x86 q35)'), ('dump', 'Дамп реального UEFI*')], self.apply_firmware_preset)
+        form.addRow(self.real_uefi_dump)
         form.addRow("Режим", self.firmware_mode); form.addRow("BIOS", self.bios_field)
         form.addRow("UEFI code", self.uefi_code_field); form.addRow("UEFI vars", self.uefi_vars_field)
         form.addRow("PFlash format", self.pflash_format)
@@ -447,7 +673,36 @@ class MainWindow(QMainWindow):
             "должен быть отдельной записываемой копией, а не оригиналом из пакета QEMU/EDK2."
         )
         warning.setWordWrap(True); layout.addWidget(warning); layout.addStretch()
+        star = QLabel(tr("* Для реального UEFI заполните LLE Project: обязательные устройства QEMU, ROM/модули при необходимости, заметки о плате и инструкции подключения. Нужны модель платы и корректная карта flash. Полный SPI-дамп может требовать извлечения BIOS region; автоматически он не преобразуется в OVMF code/vars. Совместимость не гарантируется."))
+        star.setWordWrap(True); layout.insertWidget(layout.count() - 1, star)
         self.tabs.addTab(page, "Firmware")
+
+    def apply_firmware_preset(self, key):
+        arch = self.arch_combo.currentText()
+        if key in {'bios', 'secure'} and arch not in {'x86_64', 'i386'}:
+            QMessageBox.warning(self, 'Firmware', tr("Этот профиль требует архитектуру x86.")); return
+        if key == 'secure' and self.machine_combo.currentText() != 'q35':
+            QMessageBox.warning(self, 'Firmware', tr("Для этого профиля выберите machine q35.")); return
+        path = ''
+        if key == 'dump':
+            path, _ = QFileDialog.getOpenFileName(self, tr("Выберите дамп UEFI"), '', 'Firmware (*.bin *.rom *.fd);;All files (*)')
+            if not path: return
+        self.real_uefi_dump.setChecked(key == 'dump')
+        _combo(self.firmware_mode, 'uefi' if key in {'uefi', 'secure', 'dump'} else key)
+        self.secure_boot.setChecked(key == 'secure'); self.smm_enabled.setChecked(key == 'secure')
+        self.bios_field.setText(''); self.uefi_code_field.setText(path); self.uefi_vars_field.setText('')
+        self._detected_vars_template = None
+        self.uefi_code_readonly.setChecked(True); self.uefi_vars_readonly.setChecked(False)
+        _combo(self.pflash_format, 'raw')
+        if key == 'dump':
+            self.lle_enabled.setChecked(True)
+            if not any(self._cell(self.rom_table, row, 0) == path for row in range(self.rom_table.rowCount())):
+                self._insert_rom({'path': path, 'kind': 'uefi-code', 'required': True,
+                    'qemuArgs': [], 'description': 'Real UEFI dump; attached by Firmware pflash, not additional ROM args'})
+            if not self.lle_instructions.toPlainText().strip():
+                self.lle_instructions.setPlaceholderText(tr("Опишите способ подключения flash, карту памяти и необходимые модули."))
+            self.tabs.setCurrentWidget(self.lle_enabled.parentWidget())
+        self._changed()
 
     def _make_advanced_tab(self) -> None:
         page = QWidget(); layout = QVBoxLayout(page)
@@ -456,6 +711,13 @@ class MainWindow(QMainWindow):
         self.extra_args = QPlainTextEdit(); self.extra_args.setPlaceholderText("-serial\nstdio\n-no-reboot")
         self.extra_args.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         layout.addWidget(self.extra_args)
+        presets = QFormLayout()
+        def append_args(key):
+            values = _lines(self.extra_args)
+            if key not in values:
+                _set_lines(self.extra_args, values + [key]); self._changed()
+        self._preset_row(presets, [('-no-reboot', 'No automatic reboot'), ('-no-shutdown', 'Keep QEMU after guest shutdown')], append_args)
+        layout.addLayout(presets)
         self.tabs.addTab(page, "Дополнительно")
 
     def _make_security_tab(self) -> None:
@@ -875,7 +1137,94 @@ class MainWindow(QMainWindow):
         clear = QPushButton("Очистить вывод"); clear.clicked.connect(self.console.clear)
         controls.addWidget(self.run_button); controls.addWidget(self.stop_button); controls.addWidget(validate); controls.addWidget(clear); controls.addStretch()
         layout.addLayout(controls)
+        monitors = QHBoxLayout()
+        inside = QPushButton(tr('Монитор внутри ChilledQEMU')); inside.clicked.connect(lambda: self.show_guest_screen(False))
+        outside = QPushButton(tr('Монитор отдельным окном')); outside.clicked.connect(lambda: self.show_guest_screen(True))
+        monitors.addWidget(inside); monitors.addWidget(outside); layout.addLayout(monitors)
         self.tabs.addTab(page, "Запуск и проверка")
+
+        memory_group = QGroupBox(tr("Память ВМ")); memory_layout = QHBoxLayout(memory_group)
+        self.memory_enabled = QCheckBox(tr("Отладка памяти при следующем запуске"))
+        self.memory_enabled.setToolTip(tr("Требует разрешённого monitor/QMP. Локальные сокеты доступны только вашему пользователю. Действует только для текущего сеанса приложения."))
+        self.memory_enabled.toggled.connect(self.update_command_preview)
+        memory_layout.addWidget(self.memory_enabled)
+        edit_memory = QPushButton(tr("Редактировать участок памяти…"))
+        edit_memory.clicked.connect(self.edit_guest_memory)
+        dump_memory = QPushButton(tr("Сделать дамп памяти…"))
+        dump_memory.clicked.connect(self.dump_guest_memory)
+        memory_layout.addWidget(edit_memory); memory_layout.addWidget(dump_memory)
+        layout.addWidget(memory_group)
+
+    def _memory_backend(self):
+        if self.process.state() != QProcess.Running or self._memory_access is None:
+            raise ValueError(tr("Включите отладку памяти, разрешите monitor/QMP на вкладке безопасности и перезапустите ВМ."))
+        return self._memory_access
+
+    def _memory_region(self, maximum):
+        address, ok = QInputDialog.getText(self, tr("Память ВМ"), tr("Физический адрес (например 0x40000000 для RAM ARM virt):"), text="0x0")
+        if not ok: return None
+        size, ok = QInputDialog.getInt(self, tr("Память ВМ"), tr("Размер в байтах:"), 512, 1, maximum)
+        if not ok: return None
+        start = int(address, 16) if address.lower().startswith('0x') else int(address, 10)
+        if start < 0 or start + size > 2**64:
+            raise ValueError(tr("Недопустимый адрес памяти"))
+        return start, size
+
+    def edit_guest_memory(self):
+        try:
+            backend = self._memory_backend()
+            region = self._memory_region(4096)
+            if region is None: return
+            address, size = region
+            original = backend.access(address, size)
+            value, ok = QInputDialog.getMultiLineText(self, tr("Редактировать участок памяти…"),
+                tr("HEX-байты (сохраните размер; запись может повредить состояние гостя):"), original.hex(' '))
+            if not ok: return
+            replacement = bytes.fromhex(value)
+            if len(replacement) != size:
+                raise ValueError(tr("Количество байтов должно совпадать с размером участка."))
+            if replacement == original: return
+            if QMessageBox.question(self, tr("Записать память?"),
+                    tr("Записать изменённые байты в память запущенной ВМ?"),
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
+            backend.access(address, size, replacement, expected=original)
+            self.console.appendPlainText(tr("Память записана и проверена.") + f' 0x{address:x}, {size} bytes')
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.critical(self, tr("Ошибка доступа к памяти"), str(exc))
+
+    def dump_guest_memory(self):
+        try:
+            backend = self._memory_backend()
+            region = self._memory_region(256 * 1024 * 1024)
+            if region is None: return
+            path, _ = QFileDialog.getSaveFileName(self, tr("Сделать дамп памяти…"), "guest-memory.bin", "Binary (*.bin);;All files (*)")
+            if not path: return
+            # Exclusive creation avoids overwriting a previous dump or other data.
+            with open(path, 'xb'): pass
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                backend.dump(Path(path).resolve(), *region)
+            finally:
+                QApplication.restoreOverrideCursor()
+            self.console.appendPlainText(tr("Дамп памяти сохранён:") + ' ' + path)
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.critical(self, tr("Ошибка доступа к памяти"), str(exc))
+
+    def _memory_command(self, project, command, preview=False):
+        if not hasattr(self, 'memory_enabled') or not self.memory_enabled.isChecked():
+            return command
+        security = project['vm'].get('security', {})
+        if security.get('enabled') and security.get('disableMonitor'):
+            raise ValueError(tr("Отладка памяти требует разрешить monitor/QMP на вкладке безопасности."))
+        if sys.platform == 'win32':
+            raise ValueError(tr("Отладка памяти пока доступна только на macOS и Linux."))
+        if any(token.split('=')[0] in {'-qmp', '-gdb', '-s', '-S', '-chardev', '-mon'} for token in command[1:]):
+            raise ValueError(tr("Уберите конфликтующие дополнительные параметры QMP/GDB."))
+        if preview:
+            return command + MemoryAccess(Path('/private/tmp/chilled-memory-SESSION')).arguments()
+        self._memory_directory = tempfile.TemporaryDirectory(prefix='cqmem-')
+        self._memory_access = MemoryAccess(Path(self._memory_directory.name))
+        return command + self._memory_access.arguments()
 
     def _make_actions(self) -> None:
         file_menu = self.menuBar().addMenu("Файл")
@@ -897,10 +1246,13 @@ class MainWindow(QMainWindow):
         validate_action = QAction("Проверить QEMU / LLE", self); validate_action.triggered.connect(self.validate_qemu)
         run_menu.addAction(run_action); run_menu.addAction(stop_action); run_menu.addAction(validate_action)
         settings_menu = self.menuBar().addMenu("Настройки")
+        general_settings = QAction(tr('Общие настройки…'), self)
+        general_settings.triggered.connect(self.show_preferences)
+        settings_menu.addAction(general_settings)
         language_menu = settings_menu.addMenu("Язык")
         language_group = QActionGroup(self); language_group.setExclusive(True)
         self.language_actions: dict[str, QAction] = {}
-        for code, label in (("system", "Системный язык"), ("ru", "Русский"), ("en", "English")):
+        for code, label in (("system", "Системный язык"), ("ru", "Русский"), ("ru-y", "Российский ы"), ("en", "English")):
             action = QAction(label, self)
             action.setCheckable(True); action.setData(code)
             action.setChecked(language_preference() == code)
@@ -944,7 +1296,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "О программе",
-            "ChilledQEUM 0.8.0\n\n"
+            "ChilledQEMU 0.8.0\n\n"
             "Рабочая оболочка QEMU с форматом .lleproject.\n\n"
             f"Автор: danya_3108 (danya_31082)\nSteam: {STEAM_PROFILE_URL}",
         )
@@ -1027,10 +1379,11 @@ class MainWindow(QMainWindow):
                 "memoryMiB": self.memory_spin.value(),
                 "storage": {"disks": disks, "iso": self.iso_field.text()},
                 "network": {"mode": self.net_mode.currentText(), "model": self.net_model.currentText(), "mac": self.net_mac.text().strip(), "interface": self.net_interface.text().strip(), "bridge": self.net_bridge.text().strip(), "hostForwards": _lines(self.net_forwards)},
-                "video": {"model": self.video_model.currentText(), "display": self.display_combo.currentText()},
+                "video": {"model": self.video_model.currentText(), "display": self.display_combo.currentText(), "monitorMode": self.monitor_mode.currentData()},
                 "sound": {"model": self.sound_model.currentText(), "codec": self.sound_codec.currentText(), "backend": self.sound_backend.currentText()},
                 "usb": {"enabled": self.usb_enabled.isChecked(), "controller": self.usb_controller.currentText(), "devices": _lines(self.usb_devices)},
                 "firmware": {
+                    "realUefiDump": self.real_uefi_dump.isChecked(),
                     "mode": self.firmware_mode.currentText(),
                     "bios": self.bios_field.text(),
                     "uefiCode": self.uefi_code_field.text(),
@@ -1116,9 +1469,11 @@ class MainWindow(QMainWindow):
             network = vm["network"]; _combo(self.net_mode, network.get("mode", "user")); _combo(self.net_model, network.get("model", "virtio-net-pci"))
             self.net_mac.setText(network.get("mac", "")); self.net_interface.setText(network.get("interface", "")); self.net_bridge.setText(network.get("bridge", "")); _set_lines(self.net_forwards, network.get("hostForwards", []))
             video = vm["video"]; _combo(self.video_model, video.get("model", "virtio")); _combo(self.display_combo, video.get("display", "cocoa"))
+            self.monitor_mode.setCurrentIndex(max(0, self.monitor_mode.findData(video.get('monitorMode', 'native'))))
             sound = vm["sound"]; _combo(self.sound_model, sound.get("model", "none")); _combo(self.sound_codec, sound.get("codec", "hda-output")); _combo(self.sound_backend, sound.get("backend", "default"))
             usb = vm["usb"]; self.usb_enabled.setChecked(bool(usb.get("enabled"))); _combo(self.usb_controller, usb.get("controller", "qemu-xhci")); _set_lines(self.usb_devices, usb.get("devices", []))
             firmware = vm["firmware"]
+            self.real_uefi_dump.setChecked(bool(firmware.get('realUefiDump', False)))
             _combo(self.firmware_mode, firmware.get("mode", "default")); self.bios_field.setText(firmware.get("bios", ""))
             self.uefi_code_field.setText(firmware.get("uefiCode", "")); self.uefi_vars_field.setText(firmware.get("uefiVars", ""))
             _combo(self.pflash_format, firmware.get("pflashFormat", "raw"))
@@ -1223,7 +1578,7 @@ class MainWindow(QMainWindow):
         )
         self._changed()
         self.console.appendPlainText(
-            f"[Workbench] Создан диск: {created.path} ({created.format}, {created.size_mib} MiB)\n{created.output}"
+            f"[ChilledQEMU] Создан диск: {created.path} ({created.format}, {created.size_mib} MiB)\n{created.output}"
         )
         QMessageBox.information(
             self, "Диск создан", f"Образ создан и подключён к ВМ:\n{created.path}\n\nВиртуальный размер: {created.size_mib} MiB"
@@ -1299,6 +1654,24 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "QEMU не найден", f"Не найден {capabilities.binary}")
             return None, None
         return project, capabilities
+
+    def choose_catalog_cpu(self) -> None:
+        if self.arch_combo.currentText() not in {'x86_64', 'i386'}:
+            QMessageBox.warning(self, tr("Каталог Intel / AMD"), tr("Выберите архитектуру x86_64 или i386. Для ARM используйте список моделей CPU."))
+            return
+        dialog = CpuCatalogDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        model = dialog.generation.currentData()
+        project, capabilities = self._inspect_current_qemu()
+        if capabilities is None:
+            return
+        if model not in capabilities.cpu_models:
+            QMessageBox.warning(self, tr("Модель недоступна"),
+                tr("Выбранная модель отсутствует в QEMU -cpu help:") + f' {model}')
+            return
+        self._populate_cpu_models(capabilities.cpu_models, model)
+        self._changed()
 
     def detect_cpu_models(self) -> None:
         project, capabilities = self._inspect_current_qemu()
@@ -1429,11 +1802,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Создана записываемая копия NVRAM: {target_path}", 8000)
 
     def new_project(self) -> None:
-        if not self._confirm_discard(): return
+        if not self._can_switch_vm(): return
         self.current_file = None; self.set_project(default_project()); self.console.clear(); self.validation_table.setRowCount(0)
+        self._refresh_library()
 
     def open_project(self) -> None:
-        if not self._confirm_discard(): return
+        if not self._can_switch_vm(): return
         path, _ = QFileDialog.getOpenFileName(self, "Открыть .lleproject", "", "LLE Project (*.lleproject);;JSON (*.json);;Все файлы (*)")
         if not path: return
         try:
@@ -1441,6 +1815,7 @@ class MainWindow(QMainWindow):
         except ProjectError as exc:
             QMessageBox.critical(self, "Ошибка импорта", str(exc)); return
         self.current_file = Path(path); self.set_project(project); self.statusBar().showMessage(f"Открыт {path}", 5000)
+        self._remember_vm()
 
     def save_project(self) -> bool:
         if not self.current_file: return self.save_project_as()
@@ -1457,6 +1832,7 @@ class MainWindow(QMainWindow):
         except ProjectError as exc:
             QMessageBox.critical(self, "Ошибка сохранения", str(exc)); return False
         self.current_file = actual; self.dirty = False; self.update_title(); self.statusBar().showMessage(tr(f"Сохранено: {actual}"), 5000)
+        self._remember_vm()
         self.update_command_preview(); return True
 
     def _confirm_discard(self) -> bool:
@@ -1472,6 +1848,8 @@ class MainWindow(QMainWindow):
     def update_command_preview(self) -> None:
         try:
             command = build_command(self.collect_project(), self._context())
+            command = self._memory_command(self.collect_project(), command, preview=True)
+            command = self._screen_command(command, preview=True)
             self.command_preview.setPlainText(command_text(command))
         except (ProjectError, ValueError, TypeError) as exc:
             self.command_preview.setPlainText(tr(f"Ошибка конфигурации: {exc}"))
@@ -1532,6 +1910,12 @@ class MainWindow(QMainWindow):
                 "Внутренняя проверка безопасности: обязательный -sandbox отсутствует или переопределён в команде.",
             )
             return
+        try:
+            command = self._memory_command(project, command)
+            command = self._screen_command(command)
+        except ValueError as exc:
+            QMessageBox.critical(self, tr("Ошибка доступа к памяти"), str(exc)); return
+        self.command_preview.setPlainText(command_text(command))
         self.console.appendPlainText(f"$ {command_text(command)}\n")
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
         self._running_with_sandbox = "-sandbox" in command
@@ -1539,20 +1923,27 @@ class MainWindow(QMainWindow):
 
     def stop_qemu(self) -> None:
         if self.process.state() == QProcess.NotRunning: return
-        self.console.appendPlainText(tr("\n[Workbench] Отправлен запрос на завершение QEMU…"))
+        self.console.appendPlainText(tr("\n[ChilledQEMU] Отправлен запрос на завершение QEMU…"))
         self.process.terminate()
         QTimer.singleShot(3000, self._kill_if_running)
 
     def _kill_if_running(self) -> None:
         if self.process.state() != QProcess.NotRunning:
-            self.console.appendPlainText(tr("[Workbench] QEMU не завершился за 3 секунды; процесс принудительно остановлен."))
+            self.console.appendPlainText(tr("[ChilledQEMU] QEMU не завершился за 3 секунды; процесс принудительно остановлен."))
             self.process.kill()
 
     def _read_process_output(self) -> None:
         data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        self.console.moveCursor(QTextCursor.End); self.console.insertPlainText(data); self.console.ensureCursorVisible()
+        cursor = QTextCursor(self.console.document()); cursor.movePosition(QTextCursor.End); cursor.insertText(data)
+        if getattr(self, '_auto_scroll', True):
+            self.console.moveCursor(QTextCursor.End); self.console.ensureCursorVisible()
 
     def _process_started(self) -> None:
+        self._refresh_library()
+        if self._screen_directory is not None:
+            self.screen.connect_display(Path(self._screen_directory.name) / 'vnc')
+            self.screen_dock.setFloating(self.monitor_mode.currentData() == 'floating')
+            self.screen_dock.show()
         self.run_button.setEnabled(False); self.stop_button.setEnabled(True); self.statusBar().showMessage(tr(f"QEMU запущен, PID {self.process.processId()}"))
         try:
             if self.collect_project()["vm"]["tracing"]["enabled"]:
@@ -1560,10 +1951,24 @@ class MainWindow(QMainWindow):
         except ProjectError:
             pass
 
+    def _process_error(self, error):
+        if error == QProcess.FailedToStart:
+            self.console.appendPlainText(self.process.errorString())
+            self._release_runtime_channels()
+
+    def _release_runtime_channels(self):
+        self.screen.disconnect_display()
+        for attribute in ('_screen_directory', '_memory_directory'):
+            directory = getattr(self, attribute)
+            if directory is not None:
+                directory.cleanup(); setattr(self, attribute, None)
+        self._memory_access = None
+
     def _process_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        self._release_runtime_channels(); self._refresh_library()
         self.trace_timer.stop(); self.refresh_trace_log()
         self._running_with_sandbox = False
-        self.console.appendPlainText(tr(f"\n[Workbench] QEMU завершён: код {exit_code}, статус {exit_status.name}."))
+        self.console.appendPlainText(tr(f"\n[ChilledQEMU] QEMU завершён: код {exit_code}, статус {exit_status.name}."))
         self.run_button.setEnabled(True); self.stop_button.setEnabled(False); self.statusBar().showMessage(tr("QEMU остановлен"), 5000)
 
     # --- lifecycle -------------------------------------------------------
@@ -1573,7 +1978,7 @@ class MainWindow(QMainWindow):
 
     def update_title(self) -> None:
         name = self.current_file.name if self.current_file else tr("Новый проект")
-        self.setWindowTitle(f"{'*' if self.dirty else ''}{name} — QEMU LLE Workbench")
+        self.setWindowTitle(f"{'*' if self.dirty else ''}{name} — ChilledQEMU")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.process.state() != QProcess.NotRunning:

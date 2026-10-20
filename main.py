@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from qemu_lle_workbench.i18n import ask_first_run_language, resource_path
@@ -33,8 +34,13 @@ def configure_macos_path() -> None:
 
 def main() -> int:
     configure_macos_path()
+    # macOS 27 CoreUI can trap while NSAlert rasterizes a vector symbol.
+    # Set before QApplication so first-run and file dialogs are covered too.
+    if sys.platform == "darwin":
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
     app = QApplication(sys.argv)
-    app.setApplicationName("ChilledQEUM")
+    app.setApplicationName("ChilledQEMU")
+    app.setApplicationDisplayName("ChilledQEMU")
     app.setOrganizationName("ChilledQEUM")
     icon_path = resource_path("assets/ChilledQEUM.png")
     if icon_path.is_file():

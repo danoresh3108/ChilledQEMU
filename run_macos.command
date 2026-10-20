@@ -7,7 +7,7 @@ LOG_FILE="$SCRIPT_DIR/launcher.log"
 cd -- "$SCRIPT_DIR" || exit 1
 
 exec > >(/usr/bin/tee -a "$LOG_FILE") 2>&1
-print "\n=== ChilledQEUM launcher: $(date) ==="
+print "\n=== ChilledQEMU launcher: $(date) ==="
 print "Папка проекта: $SCRIPT_DIR"
 
 pause_with_error() {
@@ -114,11 +114,11 @@ if ! "$PYTHON" -c "import PySide6" >/dev/null 2>&1; then
 fi
 
 if [[ "${CHILLEDQEUM_LAUNCHER_TEST:-0}" == "1" ]]; then
-  print "ChilledQEUM launcher self-test: OK"
+  print "ChilledQEMU launcher self-test: OK"
   exit 0
 fi
 
-print "Запускаю QEMU LLE Workbench…"
+print "Запускаю ChilledQEMU…"
 "$PYTHON" "$SCRIPT_DIR/main.py"
 EXIT_CODE=$?
 if (( EXIT_CODE != 0 )); then
